@@ -13,6 +13,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix, classification_report, make_scorer, roc_auc_score, average_precision_score
 from scipy.stats import randint as sp_randint
 from joblib import dump, load
+import pickle
 
 
 #need to decide if matching or not
@@ -76,7 +77,7 @@ def censor_codes(long_phecode_df, cases):
     #Next merge on the minyear column for those who have it
     long_phecode_df = long_phecode_df.merge(cases[['PERSON_ID','minyear']], on='PERSON_ID', how='left')
     #now censor based on minyear
-    long_phecode_df = long_phecode_df.loc[(long_phecode_df.minyear<long_phecode_df.ENTRY_YEAR)|(long_phecode_df.minyear.isna())].copy()
+    long_phecode_df = long_phecode_df.loc[(long_phecode_df.minyear>long_phecode_df.ENTRY_YEAR)|(long_phecode_df.minyear.isna())].copy()
     #make it wide
     return wide_df(long_phecode_df[['PERSON_ID','ENTRY_DATETIME','PHECODE']])
 
@@ -104,13 +105,13 @@ Input:
 Output:
     full predictions
 '''
-def pred_pipeline(df, cpu_num, target_col_name):
+def pred_pipeline(df, cpu_num, target_col_name,test_cc):
     #split out train test
     ######going to have to change this now, since the test will be split out prior to the pipeline
     #It has already been presplit
     #x_train, x_test, y_train, y_test = train_test_split(df.drop(columns=[target_col_name]), df[target_col_name], test_size=.2, shuffle=True, stratify=df[target_col_name])
     x_train = df.drop(columns=target_col_name)
-    y_train = df[[target_col_name]]
+    y_train = df[[target_col_name]].values.ravel()
     #set pipeline
     pipe = Pipeline(steps=[('reduce_dim', None), ('classify', None)])
     reduce_dim_pca = [PCA(.95), None]
@@ -120,7 +121,7 @@ def pred_pipeline(df, cpu_num, target_col_name):
                     'reduce_dim':reduce_dim_pca,
                     'classify':[LogisticRegression(solver='saga')],
                     'classify__C': st.loguniform(1e-5,100),
-                    'classify__penalty': ['none', 'l1', 'l2', 'elasticnet']
+                    'classify__penalty': [None, 'l1', 'l2']
                 },
                 {
                     'reduce_dim':reduce_dim_pca,
@@ -169,7 +170,9 @@ def pred_pipeline(df, cpu_num, target_col_name):
     print('\n')
     pipe.set_params(**search.best_params_)
     pipe.fit(x_train.drop(['PERSON_ID','dID'],axis=1), y_train)
-    #probs = pipe.predict_proba(x_test.drop(['PERSON_ID','dID'],axis=1))
+    x_test = test_cc.drop(columns=target_col_name)
+    y_test = test_cc[target_col_name].values.ravel()
+    probs = pipe.predict_proba(x_test.drop(['PERSON_ID','dID'],axis=1))
     #preds = pipe.predict(x_test.drop(['PERSON_ID','dID'],axis=1))
     #test_ret_df = pd.DataFrame() #this is being added on wrong, index from x_test is not 0,1,2,3 and is matching on wrong, so that instead of going onto the preds and the probs in order its only adding onto a certain subset of indices, i think
     #test_ret_df['cc_status'] = y_test
@@ -183,7 +186,7 @@ def pred_pipeline(df, cpu_num, target_col_name):
     #fimps['importance']=pipe['classify'].feature_importances_
     #fimps['feature_name']=list(x_train.drop(['PERSON_ID','dID'],axis=1).columns)
     #return results
-    return final_results_df, pipe#, test_ret_df#, fimps
+    return final_results_df, pipe, probs#, test_ret_df#, fimps
 
 
 def add_omim_col(df, omimdf):
@@ -207,7 +210,7 @@ if __name__=="__main__":
     gendf = pd.read_csv(sys.argv[1])#,encoding='ISO-8859-1')
     ##remove dID=0
     ##gendf = gendf.loc[gendf.dID!=0]
-    dbdf = pd.read_csv(sys.argv[2])
+    dbdf = pd.read_csv(sys.argv[2],dtype={'PHECODE':str})
     omim_df = pd.read_csv(sys.argv[3], sep='|')
     #remove gendf rows where dID isn't in omim_df
     print(gendf.shape)
@@ -226,14 +229,30 @@ if __name__=="__main__":
     cpus = int(sys.argv[8])
     target = sys.argv[9]
     output_path = sys.argv[10]
-    test_df = sys.argv[11]
+    test_df = pd.read_csv(sys.argv[11])#test set version of gendf
+    test_phe = pd.read_csv(sys.argv[12],dtype={'PHECODE':str})#test cases and controls
+    #censor and widen test_phe
+    test_phe = censor_codes(test_phe, test_df)
     print('Loaded inputs', flush=True)
+    #exclude test set from cases and potential controls
+    dbdf = dbdf.loc[~dbdf.PERSON_ID.isin(test_phe.PERSON_ID)].copy()
     cases = gendf.merge(dbdf,on='PERSON_ID', how='inner') #changed from left to inner
-    test_cases = test_df.merge(dbdf,on='PERSON_ID',how='inner')
+    test_df['cc_status']=1
+    test_cc = test_df.merge(test_phe,on='PERSON_ID',how='outer')
+    #get na indices
+    control_test_indices=test_cc.loc[test_cc['dID'].isna()].index
+    #for each na index, select a random dID from the training set (so ones we have seen before in training)
+    control_test_dids = []
+    for x in control_test_indices:
+        control_test_dids.append(np.random.choice(cases['dID'], 1)[0])
+    print(test_cc.loc[test_cc.cc_status==1,'dID'],flush=True)
+    test_cc.loc[test_cc['dID'].isna(),'dID']=control_test_dids#should fill in NA values for dID from the controls as a randomly chosen dID from case set
+    print(test_cc.loc[test_cc.cc_status==1,'dID'],flush=True)#print out the did of CC_STATUS=1 before and after changing controls, should not change the dID, so should be same twice
+    test_cc['cc_status']=test_cc['cc_status'].fillna(0)
     #fix so that cases and controls have same columns
     #get rid of columns that aren't going to be in the final output
     cases=cases.drop(columns=[col for col in cases.columns if col not in col_headers])
-    test_cases=test_cases.drop(columns=[col for col in cases.columns if col not in col_headers])
+    test_cc=test_cc.drop(columns=[col for col in cases.columns if col not in col_headers])
     controls = dbdf.loc[~dbdf.PERSON_ID.isin(gendf.PERSON_ID)].copy()
     controls.insert(loc=dID_col,column='dID',value=0)
     #match case control
@@ -250,8 +269,17 @@ if __name__=="__main__":
     #need to keep omim columns, cc_status, phecode columns, dID and person_id
     omim_add.to_csv(output_path+'omim_add.csv',index=False)
     omim_add = omim_add[col_headers]
+    test_omim_add = add_omim_col(test_cc,omim_df)
+    for col in col_headers:
+        if col not in test_omim_add:
+            test_omim_add[col]=0
+    test_omim_add = test_omim_add[col_headers].fillna(0)
+    test_omim_add.to_csv(output_path+'test_omim_add.csv',index=False)
+    #Need to write col_headers to file
+    with open(output_path+'col_headers.pkl', 'wb') as f:
+        pickle.dump(col_headers, f)
     #run pipeline
-    final_res, pipeline = pred_pipeline(omim_add, cpus, target)
+    final_res, pipeline, probs = pred_pipeline(omim_add, cpus, target, test_omim_add)
     print('Finished pipeline', flush=True)
     output_res = output_path+"final_results.csv"
     #output_probs = output_path+"final_test_set_df.csv"
@@ -260,4 +288,5 @@ if __name__=="__main__":
     final_res.to_csv(output_res,index=False)
     #test_ret.to_csv(output_probs, index=False)
     dump(pipeline, output_model)
+    np.savetxt(output_path+"test_probs.txt",probs)
     #feature_importance.to_csv(output_imps, index=False)
