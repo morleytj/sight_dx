@@ -22,9 +22,10 @@ Output:
 def runshap(df, cols, clf, background, out):
     cc = [c for c in cols if c not in ['cc_status','dID','case_prob','PERSON_ID']]
     explainer = shap.explainers.Tree(clf, data=background[cc])
-    expout = open(out+"TreeExplainer_File.out")
-    explainer.save(expout)
-    expout.close()
+    ##the save function of tree explainers is broken
+    #expout = open(out+"TreeExplainer_File.out",'wb')
+    #explainer.save(expout)
+    #expout.close()
     shap_vals = explainer.shap_values(df[cc])
     #put shap values into a dataframe
     #use [1] since we're basing it around probability of being case, rather than control
@@ -49,17 +50,52 @@ Input:
     out: path to save results to
     contr: contribution threshold as in shap force plots, set default to 0.05
 '''
-def gen_force_plot(df, pid, did, expected_val, cols, out, contr=0.05):
+def gen_force_plot(df, sdf, pid, did, expected_val, cols, out, contr=0.05):
     cols = [c for c in cols if c not in ['cc_status','dID','case_prob','PERSON_ID']]
     feats = df.loc[(df.person_id==int(pid))&(df.dID==int(did)),cols].values
     row = sdf.loc[(df.person_id==int(pid))&(df.dID==int(did)),cols].values
     shap.plots.force(expected_val, shap_values=row, features=feats, matplotlib=True,show=False, feature_names=cols, contribution_threshold=contr)
-    plt.savefig(out+str(person_id)+'_'++str(did)+'_force_plot.png')
+    plt.savefig(out+str(person_id)+'_'+str(did)+'_force_plot.png')
 
 
+# all_disease_5078940.csv
+'''
+This function takes in PID and DID, loads the appropriate filepath using the format above, and generates a foce plot from it.
+To generate this it gets the shap value of this row, which means needing to train the explainer each time, but that doesn't take too long
+Input
+Output
+'''
+def force_plot_id(pid, did, cols, clf, background, out):#, contr=0.05):
+    cc = [c for c in cols if c not in ['cc_status','dID','case_prob','PERSON_ID']]
+    explainer = shap.explainers.Tree(clf, data=background[cc])
+    df = pd.read_csv('../../results/person_id_files_all_disease/all_disease_'+str(pid)+'.csv')
+    feats = df.loc[(df.dID==int(did)),cc].values
+    shap_vals = explainer.shap_values(feats)[1]
+    shap.plots.force(explainer.expected_value[1], shap_values=shap_vals, features=feats, matplotlib=True, show=False, feature_names=cc)#, contribtion_threshold=contr)
+    plt.savefig(out+str(pid)+'_'+str(did)+'_force_plot.png')
+
+
+#python make_shap_values.py ../../results/may9_binary_prediction_cen_col_headers.pkl ../../results/may9_binary_prediction_cen_full_pipeline.joblib ../../results/shapres/force_plot_ ../../results/may9_binary_prediction_cen_omim_add.csv pid did
+#python make_shap_values.py columns clf out bg pid did (optional_contr)
+if __name__=="__main__":
+    fc = open(sys.argv[1], 'rb')
+    col = pickle.load(fc)
+    fc.close()
+    clf = joblib.load(sys.argv[2])['classify']
+    out = sys.argv[3]
+    bg = pd.read_csv(sys.argv[4])
+    personid=sys.argv[5]
+    did = sys.argv[6]
+    #if len(sys.argv)>7:
+    #    contr = float(sys.argv[7])
+    #    force_plot_id(personid, did, col, clf, bg, out, contr)
+    #else:
+    force_plot_id(personid, did, col, clf, bg, out)
+
+'''
 #python scriptname genshap cols df clf out bg
 #or
-#python scriptname forceplot cols df clf out personid did expval fnames (optional)contr
+#python scriptname forceplot cols df clf out personid did expval fnames shapdf (optional)contr
 #load in and format files, run the runshap function
 if __name__=="__main__":
     fc = open(sys.argv[2], 'rb')
@@ -71,13 +107,24 @@ if __name__=="__main__":
     if sys.argv[1]=='genshap':
         bg = pd.read_csv(sys.argv[6])
         sv, exp = runshap(df, col, clf, bg, out)
-    elif sys.arg[1]=='forceplot':
+    elif sys.argv[1]=='forceplot_depr':
         personid=sys.argv[6]
         did=sys.argv[7]
         expval=int(sys.argv[8])
-        if len(sys.argv)>9:
-            contr = float(sys.argv[9])
-            gen_force_plot(df, personid, did, expval, col, fnames, out, contr)
-        gen_force_plot(df, personid, did, expval, col, out)
+        #load in shap values
+        sdf = pd.read_csv(sys.argv[9])
+        if len(sys.argv)>10:
+            contr = float(sys.argv[10])
+            gen_force_plot(df, sdf, personid, did, expval, col, fnames, out, contr)
+        gen_force_plot(df, sdf, personid, did, expval, col, out)
+    elif sys.argv[1]=='forceplot':
+        personid=sys.argv[6]
+        did=sys.argv[7]
+        if len(sys.argv)>8:
+            contr = float(sys.argv[8])
+            force_plot_id(personid, did, col, clf, bg, out,contr)
+        else:
+            force_plot_id(personid, did, col, clf, bg, out)
     else:
         print("Input command not recognized. Please use either 'genshap' or 'forceplot'.")
+'''

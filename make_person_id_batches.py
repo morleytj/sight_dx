@@ -6,4 +6,4 @@ if __name__=="__main__":
     out_path = sys.argv[2]
     unique_pid = main_df['PERSON_ID'].unique()
     for p in unique_pid:
-        main_df.loc[main_df.PERSON_ID==p].to_csv(out+str(p)+'_all_did.csv',index=False)
+        main_df.loc[main_df.PERSON_ID==p].to_csv(out_path+str(p)+'.csv',index=False)
