@@ -25,7 +25,7 @@ def topn(n, group_df, patient_df, id_col, case_count_col, group_col, target_col,
 #call format: python scriptname df_group df_patient n out id casec groupc targetc rankc
 if __name__=='__main__':
     #df with group
-    df_group = pd.read_csv(sys.argv[1])
+    df_group = pd.read_csv(sys.argv[1],sep='|')
     #df with patient level data
     df_patient = pd.read_csv(sys.argv[2])
     n = int(sys.argv[3])
