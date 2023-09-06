@@ -1,3 +1,6 @@
+import sys
+import pandas as pd
+
 #topn takes n as well as the did_perf (per did dataframe), and the per person
 #for each distinct dID, find how often cases with that disease have it within the top n ranking
 def topn(n, dids, pids):
@@ -16,3 +19,11 @@ def topn(n, dids, pids):
     results_df['did']=topn_dict.keys()
     results_df['top'+str(n)]=topn_dict.values()
     return results_df
+
+if __name__=='__main__':
+    #df with group
+    df_group = pd.read_csv(sys.argv[1])
+    df_patient = pd.read_csv(sys.argv[2])
+    n = int(sys.argv[3])
+    outpath = str(sys.argv[4])
+    topn(n,df_group,df_patient).to_csv(outpath,index=False)
